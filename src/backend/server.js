@@ -30,7 +30,7 @@ app.use(stripMongoId);
 // app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
 
 const allowedOrigins = [
-  "http://localhost:5173",
+  "http://localhost:5174",
   "https://cooltech-jexz.vercel.app"
 ];
 
