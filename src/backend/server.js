@@ -28,7 +28,6 @@ const app = express();
 app.use(stripMongoId);
 
 // app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
-import cors from "cors";
 
 const allowedOrigins = [
   "http://localhost:5173",
