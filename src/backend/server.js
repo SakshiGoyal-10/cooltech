@@ -27,7 +27,25 @@ connectDB();
 const app = express();
 app.use(stripMongoId);
 
-app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
+// app.use(cors({ origin: process.env.CLIENT_URL || '*', credentials: true }));
+import cors from "cors";
+
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://cooltech-jexz.vercel.app"
+];
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // mobile apps / postman
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error("Not allowed by CORS"));
+  },
+  credentials: true
+}));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
