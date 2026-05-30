@@ -8,7 +8,7 @@ import { protect } from '../middleware/auth.js';
 import { createCRUD } from './crudHelper.js';
 import Job from '../models/Job.js';
 import Customer from '../models/Customer.js';
-import Invoice from '../models/Invoice.js';
+import Invoice from '../models/Invoice.model.js';
 import Technician from '../models/Technician.js';
 import { Expense, Lead, Complaint } from '../models/index.js';
 import { Contract } from '../models/hrModels.js';
@@ -387,17 +387,16 @@ projectRouter.put('/:id/progress', async (req, res) => {
 router.use('/projects', projectRouter);
 
 // ── Customer Types ─────────────────────────────────────────────────────────────
-router.use('/customer-types', createCRUD(CustomerType, {
+const customerTypeRouter = createCRUD(CustomerType, {
   searchFields: ['name', 'description'],
   filterFields: ['isActive'],
-  softDelete: false,
-}));
+});
+router.use('/customer-types', customerTypeRouter);
 
 // ── Lead Sources ───────────────────────────────────────────────────────────────
 const leadSourceRouter = createCRUD(LeadSource, {
   searchFields: ['name', 'description'],
   filterFields: ['channel', 'isActive'],
-  softDelete: false,
 });
 
 // Static before /:id
@@ -685,7 +684,6 @@ router.use('/content-library', contentRouter);
 const waRouter = createCRUD(WhatsAppMessage, {
   searchFields: ['recipientName', 'phone', 'message'],
   filterFields: ['status'],
-  softDelete: false,
 });
 
 // Static before /:id

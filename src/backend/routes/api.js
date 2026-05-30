@@ -1,10 +1,10 @@
 import express from 'express';
+import nodemailer from 'nodemailer';
 import Customer from '../models/Customer.js';
 import Technician from '../models/Technician.js';
 import Job from '../models/Job.js';
 import AMC from '../models/AMC.js';
 import Quotation from '../models/Quotation.js';
-import Invoice from '../models/Invoice.js';
 import { Payment, Expense, Inventory, Lead, Complaint, Ticket } from '../models/index.js';
 import {
   Attendance, Leave, Salary, PurchaseOrder, Supplier,
@@ -102,65 +102,148 @@ const quotRouter = createCRUD(Quotation, {
   filterFields: ['status', 'type'],
   populate: ['customer'],
 });
-
-// Convert quotation → job
-quotRouter.post('/:id/convert', async (req, res) => {
+ 
+// ── UPDATE STATUS ──
+quotRouter.patch('/:id/status', async (req, res) => {
   try {
-    const quot = await Quotation.findById(req.params.id);
-    if (!quot) return res.status(404).json({ message: 'Quotation not found.' });
-
-    const job = await Job.create({
-      customerName: quot.customerName,
-      customer: quot.customer,
-      type: quot.type,
-      amount: quot.total,
-      quotation: quot._id,
-    });
-    await Quotation.findByIdAndUpdate(quot._id, { status: 'approved' });
-    res.status(201).json({ message: 'Converted to job.', job });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-});
-
-router.use('/quotations', quotRouter);
-
-// ── Invoices ──────────────────────────────────────────────────────────────────
-const invRouter = createCRUD(Invoice, {
-  searchFields: ['invoiceId', 'customerName', 'jobRef'],
-  filterFields: ['status'],
-  populate: ['customer', 'job'],
-});
-
-// Mark invoice paid
-invRouter.put('/:id/pay', async (req, res) => {
-  try {
-    const { paymentMethod, reference } = req.body;
-    const invoice = await Invoice.findByIdAndUpdate(
+    const { status, note } = req.body;
+    const allowed = ['draft', 'sent', 'approved', 'rejected', 'expired'];
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ message: `Invalid status. Must be one of: ${allowed.join(', ')}` });
+    }
+    const quot = await Quotation.findByIdAndUpdate(
       req.params.id,
-      { status: 'paid', paidAt: new Date(), paymentMethod },
+      { status, ...(note ? { statusNote: note } : {}) },
       { new: true }
     );
-    if (!invoice) return res.status(404).json({ message: 'Invoice not found.' });
-
-    // Auto-create payment record
-    await Payment.create({
-      invoice: invoice._id,
-      invoiceRef: invoice.invoiceId,
-      customer: invoice.customer,
-      customerName: invoice.customerName,
-      amount: invoice.total,
-      method: paymentMethod || 'cash',
-      reference,
-    });
-
-    res.json(invoice);
+    if (!quot) return res.status(404).json({ message: 'Quotation not found.' });
+    res.json(quot);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
-
-router.use('/invoices', invRouter);
+ 
+// ── SEND EMAIL ──
+quotRouter.post('/:id/send-email', async (req, res) => {
+  try {
+    const quot = await Quotation.findById(req.params.id).lean();
+    if (!quot) return res.status(404).json({ message: 'Quotation not found.' });
+ 
+    const { toEmail, toName, subject, message } = req.body;
+    if (!toEmail) return res.status(400).json({ message: 'Recipient email is required.' });
+ 
+    const transporter = nodemailer.createTransport({
+      host:   process.env.MAIL_HOST,
+      port:   Number(process.env.MAIL_PORT) || 587,
+      secure: false,
+      auth: { user: process.env.MAIL_USER, pass: process.env.MAIL_PASS },
+    });
+ 
+    const itemRows = (quot.items || []).map((item, i) => `
+      <tr style="background:${i % 2 === 0 ? '#f8fafc' : '#fff'}">
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${i + 1}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0">${item.desc || ''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${item.qty || ''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right">₹${Number(item.rate || 0).toLocaleString('en-IN')}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:700">₹${Number((item.qty || 0) * (item.rate || 0)).toLocaleString('en-IN')}</td>
+      </tr>`).join('');
+ 
+    const htmlBody = `<!DOCTYPE html><html><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif">
+<div style="max-width:640px;margin:32px auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,.1)">
+  <div style="background:linear-gradient(135deg,#1a2e5c,#2563eb);padding:28px 32px">
+    <div style="color:#fff;font-size:22px;font-weight:800">ALISHA ENGINEERING</div>
+    <div style="color:#93c5fd;font-size:12px;margin-top:4px">Installation · Maintenance · Repair · AC · Fabrication · Insulation</div>
+  </div>
+  <div style="padding:32px">
+    <p style="margin:0 0 8px;font-size:15px;color:#1e293b">Dear <strong>${toName || quot.customerName || 'Valued Customer'}</strong>,</p>
+    <p style="margin:0 0 24px;font-size:14px;color:#475569;line-height:1.7">${message || `Thank you for your interest. Please find your quotation <strong>${quot.quotId}</strong> for <strong>${quot.type}</strong> services below.`}</p>
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px 20px;margin-bottom:24px">
+      <span style="margin-right:24px"><b style="font-size:11px;color:#64748b;text-transform:uppercase">Quote ID</b><br/><b style="font-size:14px;font-family:monospace;color:#1a2e5c">${quot.quotId}</b></span>
+      <span style="margin-right:24px"><b style="font-size:11px;color:#64748b;text-transform:uppercase">Type</b><br/><b style="font-size:14px;color:#1e293b">${quot.type}</b></span>
+      <span><b style="font-size:11px;color:#64748b;text-transform:uppercase">Valid Until</b><br/><b style="font-size:14px;color:#1e293b">${quot.validUntil ? new Date(quot.validUntil).toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'}) : '—'}</b></span>
+    </div>
+    <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden">
+      <thead>
+        <tr style="background:#1a2e5c">
+          <th style="padding:10px 12px;color:#fff;font-size:11px;text-align:center;width:8%">SR</th>
+          <th style="padding:10px 12px;color:#fff;font-size:11px;text-align:left">DESCRIPTION</th>
+          <th style="padding:10px 12px;color:#fff;font-size:11px;text-align:center;width:10%">QTY</th>
+          <th style="padding:10px 12px;color:#fff;font-size:11px;text-align:right;width:18%">RATE</th>
+          <th style="padding:10px 12px;color:#fff;font-size:11px;text-align:right;width:18%">TOTAL</th>
+        </tr>
+      </thead>
+      <tbody>${itemRows || '<tr><td colspan="5" style="padding:16px;text-align:center;color:#94a3b8">No items</td></tr>'}</tbody>
+      <tfoot>
+        <tr><td colspan="4" style="padding:8px 12px;text-align:right;font-weight:600;border-top:1px solid #e2e8f0">Subtotal</td><td style="padding:8px 12px;text-align:right;font-family:monospace;border-top:1px solid #e2e8f0">₹${Number(quot.subtotal||0).toLocaleString('en-IN')}</td></tr>
+        ${quot.gst ? `<tr><td colspan="4" style="padding:6px 12px;text-align:right;font-size:12px;color:#64748b">GST</td><td style="padding:6px 12px;text-align:right;font-family:monospace;color:#64748b">₹${Number(quot.gst).toLocaleString('en-IN')}</td></tr>` : ''}
+        <tr style="background:#eff6ff"><td colspan="4" style="padding:10px 12px;text-align:right;font-weight:800;font-size:14px;color:#1a2e5c;border-top:2px solid #bfdbfe">TOTAL</td><td style="padding:10px 12px;text-align:right;font-family:monospace;font-weight:800;font-size:15px;color:#1a2e5c;border-top:2px solid #bfdbfe">₹${Number(quot.total||0).toLocaleString('en-IN')}</td></tr>
+      </tfoot>
+    </table>
+    ${quot.notes ? `<div style="margin-top:20px;padding:14px;background:#fefce8;border:1px solid #fde68a;border-radius:8px"><b style="font-size:11px;color:#92400e">NOTES</b><p style="margin:6px 0 0;font-size:13px;color:#78350f;line-height:1.6">${quot.notes}</p></div>` : ''}
+    ${quot.terms ? `<div style="margin-top:12px;padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px"><b style="font-size:11px;color:#14532d">TERMS & CONDITIONS</b><p style="margin:6px 0 0;font-size:13px;color:#166534;line-height:1.6">${quot.terms}</p></div>` : ''}
+    <p style="margin:24px 0 0;font-size:13px;color:#64748b;line-height:1.7">
+      For any queries: <strong style="color:#1e293b">Vakil Yadav</strong> · 9724763909 · alishaengineering@gmail.com
+    </p>
+  </div>
+  <div style="background:#f8fafc;border-top:1px solid #e2e8f0;padding:16px 32px;font-size:11px;color:#94a3b8;text-align:center">
+    Alisha Engineering · L.I.G-II-164 G.I.D.C Housing Board · Odahav, Ahmedabad-382415
+  </div>
+</div></body></html>`;
+ 
+    await transporter.sendMail({
+      from: `"${process.env.EMAIL_FROM_NAME || 'Alisha Engineering'}" <${process.env.MAIL_FROM}>`,
+      to:   `"${toName || quot.customerName}" <${toEmail}>`,
+      subject: subject || `Quotation ${quot.quotId} – Alisha Engineering`,
+      html: htmlBody,
+    });
+ 
+    // Auto-update status to 'sent'
+    await Quotation.findByIdAndUpdate(req.params.id, { status: 'sent' });
+    res.json({ message: 'Email sent successfully.', status: 'sent' });
+  } catch (err) {
+    console.error('[Quotation Email]', err);
+    res.status(500).json({ message: err.message || 'Failed to send email.' });
+  }
+});
+ 
+// ── CONVERT TO JOB ──
+quotRouter.post('/:id/convert', async (req, res) => {
+  try {
+    const quot = await Quotation.findById(req.params.id).lean();
+    if (!quot) return res.status(404).json({ message: 'Quotation not found.' });
+    if (quot.status === 'approved') {
+      return res.status(400).json({ message: 'This quotation has already been converted to a job.' });
+    }
+ 
+    const typeMap = { Service:'Service', Installation:'Installation', Repair:'Repair', AMC:'AMC Visit', Other:'Service' };
+ 
+    const job = await Job.create({
+      customerName: quot.customerName,
+      customer:     quot.customer,
+      address:      quot.address || '',
+      type:         typeMap[quot.type] || 'Service',
+      amount:       quot.total,
+      issue:        `From Quotation ${quot.quotId}: ${quot.type}${quot.notes ? '\n' + quot.notes : ''}`,
+      remarks:      quot.terms || '',
+      quotation:    quot._id,
+      status:       'new',
+      priority:     'normal',
+      parts:        (quot.items || []).map(i => ({
+        name: i.desc  || '',
+        qty:  Number(i.qty)  || 1,
+        cost: Number(i.rate) || 0,
+      })),
+    });
+ 
+    await Quotation.findByIdAndUpdate(quot._id, { status: 'approved' });
+    res.status(201).json({ message: 'Quotation converted to job.', job });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+ 
+router.use('/quotations', quotRouter);
 
 // ── Payments ──────────────────────────────────────────────────────────────────
 router.use('/payments', createCRUD(Payment, {
@@ -280,6 +363,100 @@ leadRouter.post('/:id/convert', async (req, res) => {
     await Lead.findByIdAndUpdate(lead._id, { stage: 'won', convertedTo: customer._id });
     res.status(201).json({ message: 'Lead converted to customer.', customer });
   } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// Convert lead → Job (Won stage)
+leadRouter.post('/:id/convert-to-job', async (req, res) => {
+  try {
+    const lead = await Lead.findById(req.params.id);
+    if (!lead) return res.status(404).json({ message: 'Lead not found.' });
+ 
+    const {
+      customerName,
+      address,
+      type,
+      priority,
+      scheduledDate,
+      scheduledTime,
+      ac,
+      amount,
+      issue,
+      note,
+    } = req.body;
+ 
+    // 1. Resolve customer — use existing if already linked, else find by phone,
+    //    else create a new Customer document from lead data.
+    let customerId = lead.customer || null;
+ 
+    if (!customerId) {
+      // Try to find an existing customer with same phone
+      let existingCustomer = null;
+      if (lead.phone) {
+        existingCustomer = await Customer.findOne({
+          phone:     lead.phone,
+          isDeleted: { $ne: true },
+        });
+      }
+ 
+      if (existingCustomer) {
+        customerId = existingCustomer._id;
+      } else {
+        // Create a fresh customer from lead details
+        const newCustomer = await Customer.create({
+          name:    lead.name,
+          phone:   lead.phone   || '',
+          email:   lead.email   || '',
+          address: lead.address || '',
+          type:    lead.type    || 'Residential',
+        });
+        customerId = newCustomer._id;
+      }
+ 
+      // Link the resolved customer back to the lead for future reference
+      await Lead.findByIdAndUpdate(lead._id, { customer: customerId });
+    }
+ 
+    // 2. Create the Job document
+    const job = await Job.create({
+      customer:      customerId,
+      customerName:  customerName  || lead.name,
+      address:       address       || lead.address || '',
+      type:          type          || 'Installation',
+      priority:      priority      || 'normal',
+      status:        'new',
+      ac:            ac            || '',
+      issue:         issue
+        ? issue
+        : `Converted from Lead ${lead.leadId}${note ? '\n' + note : ''}`,
+      amount:        Number(amount) || lead.value || 0,
+      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
+      scheduledTime: scheduledTime || '',
+    });
+ 
+    // 3. Mark lead as Won, link the job ID, optionally push activity note
+    const leadPatch = {
+      stage:       'won',
+      convertedTo: job._id,
+    };
+ 
+    if (note) {
+      leadPatch.$push = {
+        activities: {
+          type: 'note',
+          note: `[Won → Job ${job.jobId}] ${note}`,
+          date: new Date(),
+          by:   req.user?.name || 'Admin',
+        },
+      };
+    }
+ 
+    await Lead.findByIdAndUpdate(lead._id, leadPatch);
+ 
+    res.status(201).json({ message: 'Lead converted to job.', job });
+  } catch (err) {
+    console.error('[Lead → Job]', err);
     res.status(500).json({ message: err.message });
   }
 });

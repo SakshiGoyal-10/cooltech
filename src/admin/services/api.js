@@ -50,10 +50,13 @@ export const amcApi        = crud('amc');
 export const quotationsApi = {
   ...crud('quotations'),
   convert: (id) => req('POST', `/quotations/${id}/convert`),
+  updateStatus:(id, b)  => req('PATCH', `/quotations/${id}/status`, b),
+  sendEmail:  (id, b)   => req('POST',  `/quotations/${id}/send-email`, b),
 };
-export const invoicesApi   = {
+export const invoicesApi = {
   ...crud('invoices'),
-  pay: (id, b) => req('PUT', `/invoices/${id}/pay`, b),
+  pay:         (id, b)    => req('PUT',   `/invoices/${id}/pay`, b),
+  updateStatus: (id, body) => req('PATCH', `/invoices/${id}/status`, body),
 };
 export const paymentsApi   = crud('payments');
 export const expensesApi   = {

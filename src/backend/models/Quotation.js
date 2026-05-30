@@ -18,6 +18,7 @@ const quotationSchema = new mongoose.Schema({
   terms:      { type: String },
   isDeleted:  { type: Boolean, default: false },
   deletedAt:  { type: Date },
+  statusNote: { type: String },
 }, { timestamps: true });
 
 quotationSchema.pre('save', async function (next) {

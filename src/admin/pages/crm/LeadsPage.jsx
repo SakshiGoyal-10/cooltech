@@ -1,6 +1,6 @@
 // LeadsPage.jsx — fully responsive for mobile & tablet
 
-import { leadsApi } from '../../services/api';
+import { leadsApi, jobsApi } from '../../services/api';
 import { useState, useRef, useEffect } from 'react';
 import { COLORS, FONTS } from '../../constants/tokens';
 import { SBadge, TypeTag } from '../../components/ui/Badges';
@@ -78,9 +78,410 @@ const ScoreBadge = ({ score, temp }) => {
   );
 };
 
+// ─── MoveStageModal ───────────────────────────────────────────────────────────
+const MoveStageModal = ({ lead, targetStage, onClose, onConfirm }) => {
+  const [note, setNote]     = useState('');
+  const [saving, setSaving] = useState(false);
+
+  if (!targetStage) return null;
+  const m = LEAD_STAGES[targetStage];
+
+  const stageIcon = {
+    new: '🆕', follow_up: '🔄', proposal_sent: '📄',
+    negotiation: '🤝', won: '🏆', lost: '❌',
+  };
+
+  const handle = async () => {
+    setSaving(true);
+    await onConfirm(targetStage, note);
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}
+      onClick={onClose}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 16, padding: '28px 28px 24px', width: '100%', maxWidth: 420, boxShadow: '0 20px 60px rgba(0,0,0,.18)', border: `2px solid ${m.color}30` }}
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: m.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+            {stageIcon[targetStage]}
+          </div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 800, color: COLORS.h1 }}>
+              Move to <span style={{ color: m.color }}>{m.label}</span>
+            </div>
+            <div style={{ fontSize: 12, color: COLORS.muted, marginTop: 2 }}>
+              {lead.name} · {lead.id}
+            </div>
+          </div>
+        </div>
+
+        {/* Stage transition pill */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: COLORS.bg, borderRadius: 10, padding: '10px 14px', marginBottom: 18, border: `1px solid ${COLORS.border}` }}>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99, background: LEAD_STAGES[lead.stage]?.bg, color: LEAD_STAGES[lead.stage]?.color }}>
+            {LEAD_STAGES[lead.stage]?.label}
+          </span>
+          <span style={{ fontSize: 16, color: COLORS.muted }}>→</span>
+          <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 10px', borderRadius: 99, background: m.bg, color: m.color }}>
+            {m.label}
+          </span>
+        </div>
+
+        {/* Note */}
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, display: 'block', marginBottom: 6 }}>
+            Add a note (optional)
+          </label>
+          <textarea
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder={`Reason for moving to ${m.label}…`}
+            rows={3}
+            style={{ width: '100%', padding: '10px 13px', borderRadius: 9, border: `1.5px solid ${COLORS.border}`, fontSize: 13, fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA', resize: 'none', outline: 'none', boxSizing: 'border-box', transition: 'border-color .15s' }}
+            onFocus={e => (e.target.style.borderColor = m.color)}
+            onBlur={e => (e.target.style.borderColor = COLORS.border)}
+          />
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            onClick={onClose}
+            style={{ flex: 1, padding: '11px', borderRadius: 9, background: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.muted, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handle}
+            disabled={saving}
+            style={{ flex: 2, padding: '11px', borderRadius: 9, background: saving ? COLORS.muted : `linear-gradient(135deg,${m.color},${m.color}cc)`, border: 'none', color: 'white', fontSize: 13, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', boxShadow: saving ? 'none' : `0 4px 14px ${m.color}40` }}
+          >
+            {saving ? 'Updating…' : `Confirm → ${m.label}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── WonModal — convert lead to Job ──────────────────────────────────────────
+const WonModal = ({ lead, onClose, onConfirm }) => {
+  const [saving, setSaving] = useState(false);
+  const [done,   setDone]   = useState(null); // { jobId } after success
+  const [error,  setError]  = useState('');
+  const [form, setForm] = useState({
+    type:          'Installation',
+    priority:      'normal',
+    scheduledDate: '',
+    scheduledTime: '',
+    ac:            '',
+    amount:        lead.value || '',
+    issue:         '',
+    note:          '',
+  });
+
+  const set = (k) => (e) => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const fieldStyle = {
+    width: '100%', padding: '9px 12px', borderRadius: 8,
+    border: `1.5px solid ${COLORS.border}`, fontSize: 13,
+    fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA',
+    outline: 'none', boxSizing: 'border-box', transition: 'border-color .15s',
+  };
+
+  const focusGreen = e => (e.target.style.borderColor = '#16A34A');
+  const blurBorder = e => (e.target.style.borderColor = COLORS.border);
+
+  const handle = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      const result = await onConfirm(form);
+      setDone(result.job);
+    } catch (err) {
+      setError(err.message || 'Something went wrong. Please try again.');
+    }
+    setSaving(false);
+  };
+
+  const LabelEl = ({ children }) => (
+    <label style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, display: 'block', marginBottom: 5 }}>
+      {children}
+    </label>
+  );
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }}
+      onClick={!done ? onClose : undefined}
+    >
+      <div
+        style={{ background: '#fff', borderRadius: 18, width: '100%', maxWidth: 500, maxHeight: '92vh', overflowY: 'auto', boxShadow: '0 24px 64px rgba(0,0,0,.2)', border: '2px solid #BBF7D0' }}
+        onClick={e => e.stopPropagation()}
+      >
+
+        {/* ── Header ── */}
+        <div style={{ background: 'linear-gradient(135deg,#16A34A,#15803D)', padding: '20px 24px', display: 'flex', alignItems: 'center', gap: 14, position: 'sticky', top: 0, zIndex: 1 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, flexShrink: 0 }}>
+            🏆
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 17, fontWeight: 800, color: '#fff' }}>Mark as Won & Create Job</div>
+            <div style={{ fontSize: 12, color: '#BBF7D0', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {lead.name} · {lead.id}
+            </div>
+          </div>
+          {!done && (
+            <button onClick={onClose} style={{ background: 'rgba(255,255,255,.15)', border: 'none', color: '#fff', width: 30, height: 30, borderRadius: 8, cursor: 'pointer', fontSize: 16, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              ✕
+            </button>
+          )}
+        </div>
+
+        {/* ── Success screen ── */}
+        {done ? (
+          <div style={{ padding: '40px 28px', textAlign: 'center' }}>
+            <div style={{ fontSize: 56, marginBottom: 14, animation: 'none' }}>🎉</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color: '#16A34A', marginBottom: 8 }}>
+              Job Created Successfully!
+            </div>
+            <div style={{ fontSize: 13, color: COLORS.muted, marginBottom: 20 }}>
+              Lead marked as <strong style={{ color: '#16A34A' }}>Won</strong> · Job is now live in the Jobs page
+            </div>
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, background: '#F0FDF4', padding: '14px 24px', borderRadius: 12, border: '2px solid #BBF7D0', marginBottom: 28 }}>
+              <span style={{ fontSize: 13, color: '#15803D', fontWeight: 600 }}>Job ID</span>
+              <span style={{ fontSize: 22, fontWeight: 800, fontFamily: FONTS.mono, color: '#166534', letterSpacing: 1 }}>
+                {done.jobId}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button
+                onClick={onClose}
+                style={{ padding: '12px 36px', borderRadius: 10, background: 'linear-gradient(135deg,#16A34A,#15803D)', color: '#fff', fontSize: 14, fontWeight: 700, border: 'none', cursor: 'pointer', boxShadow: '0 4px 14px rgba(22,163,74,.35)' }}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+
+        /* ── Form ── */
+        <div style={{ padding: '20px 24px 24px' }}>
+
+          {/* Lead summary */}
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 18, padding: '10px 14px', background: '#F0FDF4', borderRadius: 10, border: '1px solid #BBF7D0' }}>
+            {[
+              ['📍', (lead.address || '').split(',')[0] || '—'],
+              ['📞', lead.phone || '—'],
+              ['💰', `₹${Number(lead.value || 0).toLocaleString()}`],
+              ['🔌', `${lead.units || 1} unit(s)`],
+              ['👤', lead.assignedTo || '—'],
+            ].map(([icon, val]) => (
+              <span key={icon} style={{ fontSize: 12, color: '#15803D', fontWeight: 600, marginRight: 6 }}>
+                {icon} {val}
+              </span>
+            ))}
+          </div>
+
+          {/* Row 1: Type + Priority */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <LabelEl>Job Type *</LabelEl>
+              <select value={form.type} onChange={set('type')} style={fieldStyle} onFocus={focusGreen} onBlur={blurBorder}>
+                {['Installation', 'Service', 'Repair', 'AMC Visit', 'Inspection'].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <LabelEl>Priority *</LabelEl>
+              <select value={form.priority} onChange={set('priority')} style={fieldStyle} onFocus={focusGreen} onBlur={blurBorder}>
+                <option value="normal">🟢 Normal</option>
+                <option value="high">🟠 High</option>
+                <option value="urgent">🔴 Urgent</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Row 2: Scheduled Date + Time */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <LabelEl>Scheduled Date</LabelEl>
+              <input
+                type="date"
+                value={form.scheduledDate}
+                onChange={set('scheduledDate')}
+                style={fieldStyle}
+                onFocus={focusGreen}
+                onBlur={blurBorder}
+              />
+            </div>
+            <div>
+              <LabelEl>Time Slot</LabelEl>
+              <select value={form.scheduledTime} onChange={set('scheduledTime')} style={fieldStyle} onFocus={focusGreen} onBlur={blurBorder}>
+                <option value="">— Select —</option>
+                {['09:00 AM','10:00 AM','11:00 AM','12:00 PM','02:00 PM','03:00 PM','04:00 PM','05:00 PM','06:00 PM'].map(t => (
+                  <option key={t} value={t}>{t}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 3: AC Model + Amount */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
+            <div>
+              <LabelEl>AC / Unit Model</LabelEl>
+              <input
+                value={form.ac}
+                onChange={set('ac')}
+                placeholder="e.g. Daikin 1.5T Split"
+                style={fieldStyle}
+                onFocus={focusGreen}
+                onBlur={blurBorder}
+              />
+            </div>
+            <div>
+              <LabelEl>Job Amount (₹)</LabelEl>
+              <input
+                type="number"
+                value={form.amount}
+                onChange={set('amount')}
+                placeholder="0"
+                style={{ ...fieldStyle, fontFamily: FONTS.mono, fontWeight: 700, color: '#16A34A' }}
+                onFocus={focusGreen}
+                onBlur={blurBorder}
+              />
+            </div>
+          </div>
+
+          {/* Issue / Scope */}
+          <div style={{ marginBottom: 14 }}>
+            <LabelEl>Issue / Scope of Work</LabelEl>
+            <textarea
+              value={form.issue}
+              onChange={set('issue')}
+              placeholder="Describe the work to be done…"
+              rows={2}
+              style={{ ...fieldStyle, resize: 'none' }}
+              onFocus={focusGreen}
+              onBlur={blurBorder}
+            />
+          </div>
+
+          {/* Internal note */}
+          <div style={{ marginBottom: 20 }}>
+            <LabelEl>Internal Note (optional)</LabelEl>
+            <input
+              value={form.note}
+              onChange={set('note')}
+              placeholder="Logged to lead activity…"
+              style={fieldStyle}
+              onFocus={focusGreen}
+              onBlur={blurBorder}
+            />
+          </div>
+
+          {/* Error */}
+          {error && (
+            <div style={{ marginBottom: 14, padding: '10px 14px', background: '#FEF2F2', borderRadius: 8, border: '1px solid #FECACA', fontSize: 13, color: '#DC2626', fontWeight: 500 }}>
+              ⚠️ {error}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={onClose}
+              style={{ flex: 1, padding: '12px', borderRadius: 10, background: COLORS.bg, border: `1px solid ${COLORS.border}`, color: COLORS.muted, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handle}
+              disabled={saving}
+              style={{ flex: 2, padding: '12px', borderRadius: 10, background: saving ? '#9CA3AF' : 'linear-gradient(135deg,#16A34A,#15803D)', border: 'none', color: '#fff', fontSize: 13, fontWeight: 700, cursor: saving ? 'not-allowed' : 'pointer', boxShadow: saving ? 'none' : '0 4px 16px rgba(22,163,74,.4)', transition: 'all .2s' }}
+            >
+              {saving ? '⏳ Creating Job…' : '🏆 Confirm Won & Create Job'}
+            </button>
+          </div>
+        </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 // ─── LeadDetail ───────────────────────────────────────────────────────────────
-const LeadDetail = ({ lead, onBack, onSave, onDelete, openModal, initialEditMode }) => {
+const LeadDetail = ({ lead: initialLead, onBack, onSave, onDelete, openModal, initialEditMode }) => {
   const { isMobile, isTablet } = useBreakpoint();
+
+  // Local lead copy so stage changes reflect immediately without refetch
+  const [lead, setLead]             = useState(initialLead);
+  const [stageModal, setStageModal] = useState(null);  // targetStage key or null
+  const [wonModal,   setWonModal]   = useState(false); // boolean
+
+  // Keep in sync if parent passes new lead data
+  useEffect(() => { setLead(initialLead); }, [initialLead?.id, initialLead?.stage]);
+
+  // ── Handler: non-won stage change ─────────────────────────────────────────
+  const handleStageConfirm = async (targetStage, note) => {
+    try {
+      const patch = { stage: targetStage };
+      if (note) {
+        patch.notes = (lead.notes ? lead.notes + '\n' : '') +
+          `[→ ${LEAD_STAGES[targetStage].label}] ${note}`;
+      }
+      await leadsApi.update(lead._id, patch);
+      const updated = { ...lead, ...patch };
+      setLead(updated);
+      onSave(updated);
+    } catch (err) {
+      console.error('Stage update failed', err);
+    }
+  };
+
+  // ── Handler: Won — create Job via dedicated endpoint ──────────────────────
+  const handleWonConfirm = async (form) => {
+    const BASE  = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+    const token = localStorage.getItem('token');
+
+    const response = await fetch(`${BASE}/leads/${lead._id}/convert-to-job`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        customerName:  lead.name,
+        address:       lead.address || '',
+        type:          form.type,
+        priority:      form.priority,
+        scheduledDate: form.scheduledDate || undefined,
+        scheduledTime: form.scheduledTime || '',
+        ac:            form.ac || '',
+        amount:        Number(form.amount) || lead.value || 0,
+        issue:         form.issue || '',
+        note:          form.note  || '',
+      }),
+    });
+
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'Failed to create job');
+
+    // Sync stage locally + to parent list (skip handleSave to avoid double-PUT)
+const updated = { ...lead, stage: 'won' };
+setLead(updated);
+// Update parent list directly without triggering leadsApi.update
+onSave(updated, { skipBackend: true });
+
+    return data; // { job: { jobId, … } }
+  };
 
   const inputStyle = (extra = {}) => ({
     padding: '6px 10px', borderRadius: 7, border: `1.5px solid ${COLORS.border}`,
@@ -92,15 +493,35 @@ const LeadDetail = ({ lead, onBack, onSave, onDelete, openModal, initialEditMode
   const sidebar = (
     <>
       {/* Move Stage */}
-      <div style={{ background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`, padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}>
+      <div style={{ background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.border}`, padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,.05)', width: '100%' }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.h1, marginBottom: 10 }}>Move Stage</div>
         {stageOrder.map(s => {
           const m = LEAD_STAGES[s];
+          const isCurrent = lead.stage === s;
           return (
-            <button key={s} className="btn"
-              onClick={() => openModal('report', { title: `Move to ${m.label}`, format: 'Update' })}
-              style={{ width: '100%', marginBottom: 5, padding: '9px 14px', borderRadius: 8, background: lead.stage === s ? m.bg : '#F9FAFB', color: lead.stage === s ? m.color : COLORS.muted, fontSize: 12, fontWeight: lead.stage === s ? 700 : 500, textAlign: 'left', border: `1px solid ${lead.stage === s ? m.color + '30' : COLORS.border}`, cursor: 'pointer' }}>
-              {lead.stage === s ? '● ' : '○ '}{m.label}
+            <button
+              key={s}
+              className="btn"
+              onClick={() => {
+                if (isCurrent) return;
+                if (s === 'won') setWonModal(true);
+                else             setStageModal(s);
+              }}
+              style={{
+                width: '100%', marginBottom: 5, padding: '9px 14px', borderRadius: 8,
+                background: isCurrent ? m.bg : '#F9FAFB',
+                color: isCurrent ? m.color : COLORS.muted,
+                fontSize: 12, fontWeight: isCurrent ? 700 : 500,
+                textAlign: 'left',
+                border: `1px solid ${isCurrent ? m.color + '30' : COLORS.border}`,
+                cursor: isCurrent ? 'default' : 'pointer',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              }}
+            >
+              <span>{isCurrent ? '● ' : '○ '}{m.label}</span>
+              {s === 'won' && !isCurrent && (
+                <span style={{ fontSize: 10, opacity: .55, fontWeight: 500 }}>→ Job</span>
+              )}
             </button>
           );
         })}
@@ -166,11 +587,12 @@ const LeadDetail = ({ lead, onBack, onSave, onDelete, openModal, initialEditMode
           style={{ flex: '1 1 120px', padding: '11px', borderRadius: 9, background: `linear-gradient(135deg,#EA580C,#C2410C)`, color: 'white', fontSize: 13, fontWeight: 700, border: 'none', justifyContent: 'center' }}>
           📄 Create Quote
         </button>
-        <button className="btn" onClick={() => openModal('report', { title: `Mark ${lead.id} as Won`, format: 'Update' })}
+        <button className="btn"
+          onClick={() => setWonModal(true)}
           style={{ flex: '1 1 80px', padding: '11px 16px', borderRadius: 9, background: '#F0FDF4', border: '1px solid #BBF7D0', color: '#16A34A', fontSize: 13, fontWeight: 700, justifyContent: 'center' }}>
-          ✓ Won
+          🏆 Won
         </button>
-        <button className="btn" onClick={() => openModal('report', { title: `Mark ${lead.id} as Lost`, format: 'Update' })}
+        <button className="btn" onClick={() => setStageModal('lost')}
           style={{ flex: '1 1 80px', padding: '11px 16px', borderRadius: 9, background: '#FEF2F2', border: '1px solid #FECACA', color: '#DC2626', fontSize: 13, fontWeight: 700, justifyContent: 'center' }}>
           ✗ Lost
         </button>
@@ -188,165 +610,183 @@ const LeadDetail = ({ lead, onBack, onSave, onDelete, openModal, initialEditMode
   ];
 
   return (
-    <EditableDetailView
-      id={lead.id}
-      breadcrumb="Leads"
-      onBack={onBack}
-      fields={fields}
-      data={lead}
-      initialEditMode={initialEditMode}
-      onSave={onSave}
-      onDelete={() => onDelete(lead.id)}
-    >
-      {({ editMode, editData, setEditData }) => {
-        const val  = (key) => editData[key] ?? lead[key] ?? '';
-        const setK = (key) => (e) => setEditData(p => ({ ...p, [key]: e.target.value }));
+    <>
+      <EditableDetailView
+        id={lead.id}
+        breadcrumb="Leads"
+        onBack={onBack}
+        fields={fields}
+        data={lead}
+        initialEditMode={initialEditMode}
+        onSave={onSave}
+        onDelete={() => onDelete(lead.id)}
+      >
+        {({ editMode, editData, setEditData }) => {
+          const val  = (key) => editData[key] ?? lead[key] ?? '';
+          const setK = (key) => (e) => setEditData(p => ({ ...p, [key]: e.target.value }));
 
-        const editSidebar = (
-          <div style={{ background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.brand}`, padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.h1, marginBottom: 12 }}>
-              Contact Info <span style={{ fontSize: 11, fontWeight: 400, color: COLORS.brand }}>← editable</span>
+          const editSidebar = (
+            <div style={{ background: COLORS.white, borderRadius: 14, border: `1px solid ${COLORS.brand}`, padding: '16px 18px', boxShadow: '0 1px 4px rgba(0,0,0,.05)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.h1, marginBottom: 12 }}>
+                Contact Info <span style={{ fontSize: 11, fontWeight: 400, color: COLORS.brand }}>← editable</span>
+              </div>
+              {[['Contact', 'contact'], ['Phone', 'phone'], ['Email', 'email'], ['Assigned To', 'assignedTo']].map(([label, key]) => (
+                <div key={key} style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>{label}</div>
+                  <input value={val(key)} onChange={setK(key)} style={inputStyle()} />
+                </div>
+              ))}
             </div>
-            {[['Contact', 'contact'], ['Phone', 'phone'], ['Email', 'email'], ['Assigned To', 'assignedTo']].map(([label, key]) => (
-              <div key={key} style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>{label}</div>
-                <input value={val(key)} onChange={setK(key)} style={inputStyle()} />
-              </div>
-            ))}
-          </div>
-        );
+          );
 
-        // isDesktop derived from hook (not destructured above in this scope)
-        const isDesktop = !isMobile && !isTablet;
+          const isDesktop = !isMobile && !isTablet;
 
-        // Responsive detail grid
-        const detailGridStyle = {
-          display: 'grid',
-          gridTemplateColumns: isDesktop ? '1fr 300px' : '1fr',
-          gap: isMobile ? 12 : 16,
-          minWidth: 0,
-        };
+          const detailGridStyle = {
+            display: 'grid',
+            gridTemplateColumns: isDesktop ? '1fr 300px' : '1fr',
+            gap: isMobile ? 12 : 16,
+            minWidth: 0,
+          };
 
-        // Sidebar layout: 2-col on tablet, 1-col on mobile & desktop
-        const sidebarStyle = {
-          display: isTablet ? 'grid' : 'flex',
-          gridTemplateColumns: isTablet ? '1fr 1fr' : undefined,
-          flexDirection: isTablet ? undefined : 'column',
-          gap: 12,
-          alignItems: 'start',
-          minWidth: 0,
-        };
+          const sidebarStyle = {
+            display: isTablet ? 'grid' : 'flex',
+            gridTemplateColumns: isTablet ? '1fr 1fr' : undefined,
+            flexDirection: isTablet ? undefined : 'column',
+            gap: 12,
+            alignItems: 'start',
+            minWidth: 0,
+          };
 
-        return (
-          <div style={detailGridStyle}>
+          return (
+            <div style={detailGridStyle}>
 
-            {/* ── Main card ── */}
-            <div style={{
-              background: COLORS.white,
-              borderRadius: 14,
-              border: `1px solid ${editMode ? COLORS.brand : COLORS.border}`,
-              padding: isMobile ? '14px 14px' : '20px 24px',
-              boxShadow: editMode ? `0 0 0 3px ${COLORS.brand}15` : '0 1px 4px rgba(0,0,0,.05)',
-              transition: 'all .2s',
-              minWidth: 0,
-              overflow: 'hidden',
-              wordBreak: 'break-word',
-            }}>
-
-              {/* Badges row */}
-              <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-                {editMode ? (
-                  <>
-                    <select value={val('stage')} onChange={setK('stage')} style={{ padding: '6px 10px', borderRadius: 7, border: `1.5px solid ${COLORS.border}`, fontSize: 13, background: '#FAFAFA', fontFamily: FONTS.sans, outline: 'none', flex: '1 1 120px' }}>
-                      {stageOrder.map(s => <option key={s} value={s}>{LEAD_STAGES[s].label}</option>)}
-                    </select>
-                    <select value={val('type')} onChange={setK('type')} style={{ padding: '6px 10px', borderRadius: 7, border: `1.5px solid ${COLORS.border}`, fontSize: 13, background: '#FAFAFA', fontFamily: FONTS.sans, outline: 'none', flex: '1 1 100px' }}>
-                      {TYPE_OPTIONS.map(t => <option key={t}>{t}</option>)}
-                    </select>
-                  </>
-                ) : (
-                  <><SBadge s={lead.stage} map={LEAD_STAGES} /><TypeTag type={lead.type} /></>
-                )}
-              </div>
-
-              {/* Company name + value */}
+              {/* ── Main card ── */}
               <div style={{
-                display: 'flex',
-                flexDirection: isMobile ? 'column' : 'row',
-                justifyContent: 'space-between',
-                alignItems: isMobile ? 'flex-start' : 'flex-start',
-                gap: isMobile ? 8 : 16,
-                marginBottom: 20,
+                background: COLORS.white,
+                borderRadius: 14,
+                border: `1px solid ${editMode ? COLORS.brand : COLORS.border}`,
+                padding: isMobile ? '14px 14px' : '20px 24px',
+                boxShadow: editMode ? `0 0 0 3px ${COLORS.brand}15` : '0 1px 4px rgba(0,0,0,.05)',
+                transition: 'all .2s',
+                minWidth: 0,
+                overflow: 'hidden',
+                wordBreak: 'break-word',
               }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  {editMode
-                    ? <input value={val('name')} onChange={setK('name')} style={inputStyle({ fontSize: isMobile ? 16 : 18, fontWeight: 800, marginBottom: 6 })} />
-                    : <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: COLORS.h1 }}>{lead.name}</div>
-                  }
-                  {editMode
-                    ? <input value={val('address')} onChange={setK('address')} placeholder="Address" style={inputStyle({ marginTop: 6 })} />
-                    : <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>📍 {lead.address}</div>
-                  }
-                </div>
-                <div style={{ textAlign: isMobile ? 'left' : 'right', flexShrink: 0 }}>
-                  <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Potential Value</div>
-                  {editMode
-                    ? <input value={val('value')} type="number" onChange={setK('value')} style={inputStyle({ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: COLORS.brand, fontFamily: FONTS.mono, textAlign: isMobile ? 'left' : 'right', width: isMobile ? '100%' : 160 })} />
-                    : <div style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: COLORS.brand, fontFamily: FONTS.mono }}>₹{lead.value.toLocaleString()}</div>
-                  }
-                </div>
-              </div>
 
-              {/* Fields grid — 2-col on sm+, 1-col on mobile */}
-              <div className="job-field-grid" style={{ marginBottom: 20 }}>
-                {fieldKeys.map(key => (
-                  <div key={key}>
-                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>{fieldLabels[key]}</div>
+                {/* Badges row */}
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  {editMode ? (
+                    <>
+                      <select value={val('stage')} onChange={setK('stage')} style={{ padding: '6px 10px', borderRadius: 7, border: `1.5px solid ${COLORS.border}`, fontSize: 13, background: '#FAFAFA', fontFamily: FONTS.sans, outline: 'none', flex: '1 1 120px' }}>
+                        {stageOrder.map(s => <option key={s} value={s}>{LEAD_STAGES[s].label}</option>)}
+                      </select>
+                      <select value={val('type')} onChange={setK('type')} style={{ padding: '6px 10px', borderRadius: 7, border: `1.5px solid ${COLORS.border}`, fontSize: 13, background: '#FAFAFA', fontFamily: FONTS.sans, outline: 'none', flex: '1 1 100px' }}>
+                        {TYPE_OPTIONS.map(t => <option key={t}>{t}</option>)}
+                      </select>
+                    </>
+                  ) : (
+                    <><SBadge s={lead.stage} map={LEAD_STAGES} /><TypeTag type={lead.type} /></>
+                  )}
+                </div>
+
+                {/* Company name + value */}
+                <div style={{
+                  display: 'flex',
+                  flexDirection: isMobile ? 'column' : 'row',
+                  justifyContent: 'space-between',
+                  alignItems: isMobile ? 'flex-start' : 'flex-start',
+                  gap: isMobile ? 8 : 16,
+                  marginBottom: 20,
+                }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     {editMode
-                      ? <input value={val(key)} onChange={setK(key)} style={inputStyle()} />
-                      : <div style={{ fontSize: 13, color: COLORS.h2, wordBreak: 'break-word' }}>{lead[key]}</div>
+                      ? <input value={val('name')} onChange={setK('name')} style={inputStyle({ fontSize: isMobile ? 16 : 18, fontWeight: 800, marginBottom: 6 })} />
+                      : <div style={{ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: COLORS.h1 }}>{lead.name}</div>
+                    }
+                    {editMode
+                      ? <input value={val('address')} onChange={setK('address')} placeholder="Address" style={inputStyle({ marginTop: 6 })} />
+                      : <div style={{ fontSize: 13, color: COLORS.muted, marginTop: 4 }}>📍 {lead.address}</div>
                     }
                   </div>
-                ))}
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Lead Score</div>
-                  <ScoreBadge score={lead.score} temp={lead.temp} />
+                  <div style={{ textAlign: isMobile ? 'left' : 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, color: COLORS.muted, marginBottom: 4 }}>Potential Value</div>
+                    {editMode
+                      ? <input value={val('value')} type="number" onChange={setK('value')} style={inputStyle({ fontSize: isMobile ? 16 : 20, fontWeight: 800, color: COLORS.brand, fontFamily: FONTS.mono, textAlign: isMobile ? 'left' : 'right', width: isMobile ? '100%' : 160 })} />
+                      : <div style={{ fontSize: isMobile ? 22 : 26, fontWeight: 800, color: COLORS.brand, fontFamily: FONTS.mono }}>₹{lead.value.toLocaleString()}</div>
+                    }
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Touchpoints</div>
-                  <div style={{ fontSize: 13, color: COLORS.h2 }}>📞{lead.calls} · 📧{lead.emails} · 🚗{lead.visits}</div>
+
+                {/* Fields grid */}
+                <div className="job-field-grid" style={{ marginBottom: 20 }}>
+                  {fieldKeys.map(key => (
+                    <div key={key}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>{fieldLabels[key]}</div>
+                      {editMode
+                        ? <input value={val(key)} onChange={setK(key)} style={inputStyle()} />
+                        : <div style={{ fontSize: 13, color: COLORS.h2, wordBreak: 'break-word' }}>{lead[key]}</div>
+                      }
+                    </div>
+                  ))}
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Lead Score</div>
+                    <ScoreBadge score={lead.score} temp={lead.temp} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Touchpoints</div>
+                    <div style={{ fontSize: 13, color: COLORS.h2 }}>📞{lead.calls} · 📧{lead.emails} · 🚗{lead.visits}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Created</div>
+                    <div style={{ fontSize: 13, color: COLORS.h2 }}>{lead.created}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Last Contact</div>
+                    <div style={{ fontSize: 13, color: COLORS.h2 }}>{lead.lastContact}</div>
+                  </div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Created</div>
-                  <div style={{ fontSize: 13, color: COLORS.h2 }}>{lead.created}</div>
+
+                {/* Notes */}
+                <div style={{ marginBottom: 20 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.h1, marginBottom: 8 }}>Notes</div>
+                  {editMode
+                    ? <textarea value={val('notes')} onChange={setK('notes')} style={{ width: '100%', padding: '11px 13px', borderRadius: 8, border: `1.5px solid ${COLORS.brand}`, fontSize: 13, fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA', resize: 'vertical', minHeight: 75, outline: 'none', boxSizing: 'border-box' }} />
+                    : <textarea defaultValue={lead.notes} readOnly style={{ width: '100%', padding: '11px 13px', borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 13, fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA', resize: 'vertical', minHeight: 75, boxSizing: 'border-box' }} />
+                  }
                 </div>
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.faint, textTransform: 'uppercase', letterSpacing: .5, marginBottom: 4 }}>Last Contact</div>
-                  <div style={{ fontSize: 13, color: COLORS.h2 }}>{lead.lastContact}</div>
-                </div>
+
+                {!editMode && activityAndActions}
               </div>
 
-              {/* Notes */}
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.h1, marginBottom: 8 }}>Notes</div>
-                {editMode
-                  ? <textarea value={val('notes')} onChange={setK('notes')} style={{ width: '100%', padding: '11px 13px', borderRadius: 8, border: `1.5px solid ${COLORS.brand}`, fontSize: 13, fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA', resize: 'vertical', minHeight: 75, outline: 'none', boxSizing: 'border-box' }} />
-                  : <textarea defaultValue={lead.notes} readOnly style={{ width: '100%', padding: '11px 13px', borderRadius: 8, border: `1px solid ${COLORS.border}`, fontSize: 13, fontFamily: FONTS.sans, color: COLORS.h2, background: '#FAFAFA', resize: 'vertical', minHeight: 75, boxSizing: 'border-box' }} />
-                }
+              {/* ── Sidebar ── */}
+              <div style={sidebarStyle}>
+                {editMode ? editSidebar : sidebar}
               </div>
 
-              {!editMode && activityAndActions}
             </div>
+          );
+        }}
+      </EditableDetailView>
 
-            {/* ── Sidebar ── */}
-            <div style={sidebarStyle}>
-              {editMode ? editSidebar : sidebar}
-            </div>
+      {/* ── MoveStageModal (non-won stages) ── */}
+      {stageModal && (
+        <MoveStageModal
+          lead={lead}
+          targetStage={stageModal}
+          onConfirm={handleStageConfirm}
+          onClose={() => setStageModal(null)}
+        />
+      )}
 
-          </div>
-        );
-      }}
-    </EditableDetailView>
+      {/* ── WonModal ── */}
+      {wonModal && (
+        <WonModal
+          lead={lead}
+          onClose={() => setWonModal(false)}
+          onConfirm={handleWonConfirm}
+        />
+      )}
+    </>
   );
 };
 
@@ -389,7 +829,6 @@ const LeadsPage = ({ openModal }) => {
 
   useEffect(() => {
     fetchLeads();
-    // Refetch when window regains focus (catches modal-created leads)
     window.addEventListener('focus', fetchLeads);
     return () => window.removeEventListener('focus', fetchLeads);
   }, []);
@@ -398,15 +837,24 @@ const LeadsPage = ({ openModal }) => {
   const wonValue      = leads.filter(l => l.stage === 'won').reduce((s, l) => s + (l.value || 0), 0);
   const lead          = open ? leads.find(l => l.id === open || l._id === open) : null;
 
-  const handleSave = async (updated) => {
-    try {
-      const mongoId = leads.find(l => l.id === (updated.id || open))?._id || updated._id;
-      const doc = await leadsApi.update(mongoId, updated);
-      setLeads(prev => prev.map(l => l._id === doc._id ? normaliseLead(doc) : l));
-    } catch {
-      setLeads(prev => prev.map(l => l.id === updated.id ? { ...l, ...updated } : l));
-    }
-  };
+  const handleSave = async (updated, opts = {}) => {
+  // Skip backend call when the update was already handled
+  // (e.g. convert-to-job already patched the lead server-side)
+  if (opts.skipBackend) {
+    setLeads(prev => prev.map(l =>
+      (l.id === updated.id || l._id === updated._id) ? { ...l, ...updated } : l
+    ));
+    return;
+  }
+  try {
+    const mongoId = leads.find(l => l.id === (updated.id || open))?._id || updated._id;
+    const doc = await leadsApi.update(mongoId, updated);
+    setLeads(prev => prev.map(l => l._id === doc._id ? normaliseLead(doc) : l));
+  } catch {
+    setLeads(prev => prev.map(l => l.id === updated.id ? { ...l, ...updated } : l));
+  }
+};
+
   const handleDelete = async (id) => {
     try {
       const mongoId = leads.find(l => l.id === id || l._id === id)?._id || id;
@@ -415,7 +863,8 @@ const LeadsPage = ({ openModal }) => {
     setLeads(prev => prev.filter(l => l.id !== id && l._id !== id));
     setOpen(null);
   };
-  const handleBack   = ()        => { setOpen(null); setInitialEditMode(false); };
+
+  const handleBack = () => { setOpen(null); setInitialEditMode(false); };
 
   const { q, setQ, activeFilters, setFilter, filtered: searchedLeads } = useTableSearch(
     leads,
@@ -586,8 +1035,6 @@ const LeadsPage = ({ openModal }) => {
 
             {/* Search + filters */}
             <div style={{ padding: '12px 14px', borderBottom: `1px solid ${COLORS.border}`, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-
-              {/* Full-width search bar on mobile */}
               <div style={{ flex: isMobile ? '0 0 100%' : '1 1 180px', minWidth: isMobile ? '100%' : 140 }}>
                 <TableSearchBar
                   value={q}
@@ -595,7 +1042,6 @@ const LeadsPage = ({ openModal }) => {
                   placeholder="Search by name, contact, phone, source…"
                 />
               </div>
-
               <FilterSelect
                 value={activeFilters.type}
                 onChange={val => setFilter('type', val)}
@@ -613,7 +1059,7 @@ const LeadsPage = ({ openModal }) => {
               </div>
             </div>
 
-            {/* Table — always horizontally scrollable */}
+            {/* Table */}
             <div style={{ overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
                 <Thead cols={['ID', 'Company', 'Contact', 'Type', 'Units', 'Source', 'Value', 'Score', 'Assigned', 'Stage', 'Last Contact', '']} />

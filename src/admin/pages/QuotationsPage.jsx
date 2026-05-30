@@ -18,6 +18,7 @@ import ExportDropdown from '../components/layout/ExportDropdown';
 import useExport from '../hooks/useExport';
 import useMagicImport from '../hooks/useMagicImport';
 import MagicImportPanel from '../components/layout/MagicImportPanel';
+import { UpdateStatusModal, SendEmailModal, ConvertToJobModal } from '../components/ui/QuotationModals';
 import logoImg      from '../assets/logo.png';
 import signatureImg from '../assets/signature.png';
 
@@ -62,7 +63,6 @@ const QuotationDocView = ({ quot, editMode, editData, setEditData, editItems, se
   const eIn  = (extra = {}) => ({ width: "100%", padding: "3px 6px", border: "1.5px solid #94a3b8", borderRadius: 4, fontSize: 12, fontFamily: FONTS.sans, outline: "none", background: "#FAFAFA", boxSizing: "border-box", ...extra });
 
   return (
-    /* Outer wrapper: scrollable on mobile so the fixed-layout document doesn't break the page */
     <div style={{ overflowX: "auto", WebkitOverflowScrolling: "touch", borderRadius: 10, border: `1.5px solid ${editMode ? COLORS.brand : COLORS.border}`, boxShadow: editMode ? `0 0 0 3px ${COLORS.brand}18` : "0 2px 12px rgba(0,0,0,.08)", transition: "all .2s" }}>
       <div style={{ minWidth: 520, background: "white", fontFamily: FONTS.sans }}>
 
@@ -221,7 +221,7 @@ function useBreakpoint() {
     typeof window !== 'undefined' ? window.innerWidth : 1200
   );
 
-  useEffect(() => {                          // ✅ use the imported useEffect
+  useEffect(() => {
     const handler = () => setWidth(window.innerWidth);
     window.addEventListener('resize', handler);
     return () => window.removeEventListener('resize', handler);
@@ -239,7 +239,7 @@ function useBreakpoint() {
 const QuotationsPage = ({ openModal }) => {
   const { isMobile, isTablet, isDesktop } = useBreakpoint();
   const [open, setOpen]                   = useState(null);
-  const [quotations, setQuotations] = useState([]);
+  const [quotations, setQuotations]       = useState([]);
 
   const normaliseQuot = (q) => ({
     ...q,
@@ -258,16 +258,22 @@ const QuotationsPage = ({ openModal }) => {
   });
 
   useEffect(() => {
-    quotationsApi.list({limit:200})
+    quotationsApi.list({ limit: 200 })
       .then(r => setQuotations((r.data ?? []).map(normaliseQuot)))
       .catch(() => {});
   }, []);
+
   const [deleteTarget, setDeleteTarget]   = useState(null);
   const [editMode, setEditMode]           = useState(false);
   const [editData, setEditData]           = useState({});
   const [editItems, setEditItems]         = useState([]);
   const [showPDF, setShowPDF]             = useState(false);
   const [showExportPDF, setShowExportPDF] = useState(false);
+
+  // ── New modal states ──────────────────────────────────────────────────────
+  const [showStatusModal, setShowStatusModal]   = useState(false);
+  const [showEmailModal, setShowEmailModal]     = useState(false);
+  const [showConvertModal, setShowConvertModal] = useState(false);
 
   const quot = open ? quotations.find(q => q.id === open || q._id === open) : null;
 
@@ -322,7 +328,7 @@ const QuotationsPage = ({ openModal }) => {
     <>
       <div className="fi" style={{ display:"flex", flexDirection:"column", gap:14 }}>
 
-        {/* Top bar — compact on mobile */}
+        {/* Top bar */}
         <div className="quot-top-bar">
           <BackBtn onClick={handleBack} />
           <span style={{ fontSize:13, color:COLORS.muted }}>Quotations /</span>
@@ -348,10 +354,10 @@ const QuotationsPage = ({ openModal }) => {
           </div>
         )}
 
-        {/* Main content: doc + sidebar — stacks on mobile/tablet */}
+        {/* Main content: doc + sidebar */}
         <div className="quot-detail-grid">
 
-          {/* Quotation document — scrollable on mobile */}
+          {/* Quotation document */}
           <QuotationDocView
             quot={quot} editMode={editMode}
             editData={editData} setEditData={setEditData}
@@ -361,25 +367,66 @@ const QuotationsPage = ({ openModal }) => {
 
           {/* Sidebar */}
           <div className="quot-detail-sidebar">
+
+            {/* ── Actions ── */}
             {!editMode && (
               <div style={{ background:COLORS.white, borderRadius:12, border:`1px solid ${COLORS.border}`, padding:"14px 16px", boxShadow:"0 1px 4px rgba(0,0,0,.05)" }}>
                 <div style={{ fontSize:13, fontWeight:700, color:COLORS.h1, marginBottom:10 }}>Actions</div>
                 <div style={{ display:"flex", flexDirection:"column", gap:7 }}>
-                  <button className="btn" onClick={() => openModal("send_quotation",{id:quot.id})} style={{ width:"100%", padding:"9px", borderRadius:8, background:`linear-gradient(135deg,${COLORS.brand},${COLORS.brandD})`, color:"white", fontSize:12, fontWeight:700, border:"none", boxShadow:`0 3px 10px ${COLORS.brand}40` }}>📧 Send to Customer</button>
-                  <button className="btn" onClick={() => setShowPDF(true)} style={{ width:"100%", padding:"9px", borderRadius:8, background:"#F0F9FF", border:"1px solid #BAE6FD", color:"#0369A1", fontSize:12, fontWeight:700 }}>📥 Download PDF</button>
-                  <button className="btn" onClick={() => openModal("convert_to_job",{id:quot.id})} style={{ width:"100%", padding:"9px", borderRadius:8, background:"#F0FDF4", border:"1px solid #BBF7D0", color:"#16A34A", fontSize:12, fontWeight:700 }}>✓ Convert to Job</button>
+                  <button
+                    className="btn"
+                    onClick={() => setShowEmailModal(true)}
+                    style={{ width:"100%", padding:"9px", borderRadius:8, background:`linear-gradient(135deg,${COLORS.brand},${COLORS.brandD})`, color:"white", fontSize:12, fontWeight:700, border:"none", boxShadow:`0 3px 10px ${COLORS.brand}40`, cursor:"pointer" }}
+                  >
+                    📧 Send to Customer
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => setShowPDF(true)}
+                    style={{ width:"100%", padding:"9px", borderRadius:8, background:"#F0F9FF", border:"1px solid #BAE6FD", color:"#0369A1", fontSize:12, fontWeight:700, cursor:"pointer" }}
+                  >
+                    📥 Download PDF
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => setShowConvertModal(true)}
+                    style={{ width:"100%", padding:"9px", borderRadius:8, background:"#F0FDF4", border:"1px solid #BBF7D0", color:"#16A34A", fontSize:12, fontWeight:700, cursor:"pointer" }}
+                  >
+                    ✓ Convert to Job
+                  </button>
                 </div>
               </div>
             )}
+
+            {/* ── Update Status ── */}
             {!editMode && (
               <div style={{ background:COLORS.white, borderRadius:12, border:`1px solid ${COLORS.border}`, padding:"14px 16px", boxShadow:"0 1px 4px rgba(0,0,0,.05)" }}>
                 <div style={{ fontSize:13, fontWeight:700, color:COLORS.h1, marginBottom:10 }}>Update Status</div>
-                {["draft","sent","approved","rejected"].map(s => {
+                {["draft","sent","approved","rejected","expired"].map(s => {
                   const m = QUOT_STATUS[s];
-                  return <button key={s} className="btn" onClick={() => openModal("report",{title:`Update to ${m.label}`})} style={{ width:"100%", marginBottom:5, padding:"8px 12px", borderRadius:8, background:quot.status===s?m.bg:"#F9FAFB", color:quot.status===s?m.color:COLORS.muted, fontSize:12, fontWeight:quot.status===s?700:500, textAlign:"left", border:`1px solid ${quot.status===s?m.color+"30":COLORS.border}` }}>{quot.status===s?"● ":"→ "}{m.label}</button>;
+                  return (
+                    <button
+                      key={s}
+                      className="btn"
+                      onClick={() => setShowStatusModal(true)}
+                      style={{
+                        width:"100%", marginBottom:5, padding:"8px 12px", borderRadius:8,
+                        background: quot.status === s ? m.bg : "#F9FAFB",
+                        color:      quot.status === s ? m.color : COLORS.muted,
+                        fontSize:12, fontWeight: quot.status === s ? 700 : 500,
+                        textAlign:"left",
+                        border: `1px solid ${quot.status === s ? m.color + "30" : COLORS.border}`,
+                        cursor:"pointer",
+                      }}
+                    >
+                      {quot.status === s ? "● " : "→ "}{m.label}
+                    </button>
+                  );
                 })}
               </div>
             )}
+
+            {/* ── Quote Info ── */}
             <div style={{ background:COLORS.white, borderRadius:12, border:`1px solid ${editMode?COLORS.brand:COLORS.border}`, padding:"14px 16px", boxShadow:"0 1px 4px rgba(0,0,0,.05)", transition:"border-color .2s" }}>
               <div style={{ fontSize:13, fontWeight:700, color:COLORS.h1, marginBottom:10 }}>
                 Quote Info{editMode && <span style={{ fontSize:11, fontWeight:400, color:COLORS.brand, marginLeft:8 }}>← edit in doc</span>}
@@ -391,6 +438,7 @@ const QuotationsPage = ({ openModal }) => {
                 </div>
               ))}
             </div>
+
             {editMode && (
               <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
                 <button onClick={handleSave} style={{ width:"100%", padding:"10px", borderRadius:8, border:"none", fontSize:13, fontWeight:700, cursor:"pointer", background:`linear-gradient(135deg,${COLORS.brand},${COLORS.brandD})`, color:"white", boxShadow:`0 4px 12px ${COLORS.brand}40` }}>✓ Save Changes</button>
@@ -401,8 +449,64 @@ const QuotationsPage = ({ openModal }) => {
         </div>
       </div>
 
-      <PDFPreview open={showPDF} onClose={() => setShowPDF(false)} title={quot.id} filename={`quotation-${quot.id}`} template="quotation" data={quot} />
-      <DeleteConfirmModal isOpen={!!deleteTarget} onConfirm={() => { handleDelete(deleteTarget); setOpen(null); }} onCancel={() => setDeleteTarget(null)} message="This quotation will be permanently removed and cannot be recovered!" />
+      {/* ── Existing modals ── */}
+      <PDFPreview
+        open={showPDF}
+        onClose={() => setShowPDF(false)}
+        title={quot.id}
+        filename={`quotation-${quot.id}`}
+        template="quotation"
+        data={quot}
+      />
+      <DeleteConfirmModal
+        isOpen={!!deleteTarget}
+        onConfirm={() => { handleDelete(deleteTarget); setOpen(null); }}
+        onCancel={() => setDeleteTarget(null)}
+        message="This quotation will be permanently removed and cannot be recovered!"
+      />
+
+      {/* ── New functional modals ── */}
+      {showStatusModal && (
+        <UpdateStatusModal
+          quot={quot}
+          onClose={() => setShowStatusModal(false)}
+          onUpdated={(updated) => {
+            setQuotations(prev => prev.map(q =>
+              (q._id === updated._id || q.id === updated.quotId)
+                ? normaliseQuot(updated)
+                : q
+            ));
+          }}
+        />
+      )}
+
+      {showEmailModal && (
+        <SendEmailModal
+          quot={quot}
+          onClose={() => setShowEmailModal(false)}
+          onSent={() => {
+            setQuotations(prev => prev.map(q =>
+              (q._id === quot._id || q.id === quot.id)
+                ? { ...q, status: 'sent' }
+                : q
+            ));
+          }}
+        />
+      )}
+
+      {showConvertModal && (
+        <ConvertToJobModal
+          quot={quot}
+          onClose={() => setShowConvertModal(false)}
+          onConverted={() => {
+            setQuotations(prev => prev.map(q =>
+              (q._id === quot._id || q.id === quot.id)
+                ? { ...q, status: 'approved' }
+                : q
+            ));
+          }}
+        />
+      )}
     </>
   );
 
@@ -437,7 +541,7 @@ const QuotationsPage = ({ openModal }) => {
 
         {magicImport.panelOpen && <MagicImportPanel {...magicImport} />}
 
-        {/* KPI cards — responsive grid */}
+        {/* KPI cards */}
         <div className="quot-kpi-grid">
           <KCard label="Total Quotes"   value={counts.total}    sub="all time"             icon="📄" iconBg="#FFF7ED" color={COLORS.brand} delay="" />
           <KCard label="Sent / Pending" value={counts.sent}     sub="awaiting reply"       icon="📤" iconBg="#EFF6FF" color="#3B82F6"      delay="1" />
@@ -448,11 +552,9 @@ const QuotationsPage = ({ openModal }) => {
         {/* Table */}
         <div style={{ background:COLORS.white, borderRadius:14, border:`1px solid ${COLORS.border}`, boxShadow:"0 1px 4px rgba(0,0,0,.05)", overflow:"clip" }}>
           <div style={{ padding:'12px 18px', borderBottom:`1px solid ${COLORS.border}`, display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
-             {/* Search bar — full width on mobile */}
-          <div style={{ width: isMobile ? '60%' : 'auto' }}>
-<TableSearchBar value={q} onChange={setQ} placeholder="Search by customer, contact, type…" />
-          </div>
-            
+            <div style={{ width: isMobile ? '60%' : 'auto' }}>
+              <TableSearchBar value={q} onChange={setQ} placeholder="Search by customer, contact, type…" />
+            </div>
             <FilterSelect value={activeFilters.type}   onChange={val => setFilter("type",   val)} options={["Service","Repair","Installation","AMC"]} allLabel="All Types" />
             <FilterSelect value={activeFilters.status} onChange={val => setFilter("status", val)} options={["draft","sent","approved","rejected","Expired"]} allLabel="All Status" />
             <div style={{ marginLeft:'auto' }}><ExportDropdown {...exportProps} /></div>
@@ -462,7 +564,7 @@ const QuotationsPage = ({ openModal }) => {
               <Thead cols={["Quote ID","Customer","Contact","Type","Items","Subtotal","GST","Total","Valid Till","Status",""]} />
               <tbody>
                 {paginated.map((q, i) => (
-                  <tr key={q.id} className="row" 
+                  <tr key={q.id} className="row"
                     style={{ borderBottom:`1px solid ${COLORS.border}22`, background:i%2===0?COLORS.white:"#FAFAFA" }}>
                     <td style={{ padding:"13px 14px" }}><span style={{ fontFamily:FONTS.mono, fontSize:12, fontWeight:600, color:COLORS.brand }}>{q.id}</span></td>
                     <td style={{ padding:"13px 14px", fontSize:13, fontWeight:700, color:COLORS.h1 }}>{q.customer}</td>

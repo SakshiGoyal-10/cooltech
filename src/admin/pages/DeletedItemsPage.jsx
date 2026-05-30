@@ -38,7 +38,7 @@ const RESOURCES = [
   { key: 'expenses',            label: 'Expense',             module: 'Expense'             },
   { key: 'assets',              label: 'Asset',               module: 'Asset'               },
   { key: 'inventory',           label: 'Inventory Item',      module: 'Inventory Item'      },
-  { key: 'suppliers',           label: 'Supplier',            module: 'Supplier'            },
+  // { key: 'suppliers',           label: 'Supplier',            module: 'Supplier'            },
 ];
 
 const MODULE_STYLE = {

@@ -21,6 +21,7 @@ import taskRoutes from './routes/taskRoutes.js';
 import calendarRoutes from './routes/calendarRoutes.js';
 import extendedRoutes from './routes/extendedRoutes.js';
 import technicianLookupsRouter from './routes/technicianLookups.js';
+import invoiceRoutes from "./routes/invoice.routes.js";
 
 connectDB();
 
@@ -64,6 +65,7 @@ app.use('/api/settings', accountSettingsRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/technician-lookups', technicianLookupsRouter);
+app.use("/api/invoices", invoiceRoutes);
 
 // ── Extended / Missing Modules ────────────────────────────────────────────────
 app.use('/api', extendedRoutes);

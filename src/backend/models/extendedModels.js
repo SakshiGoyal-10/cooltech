@@ -230,6 +230,8 @@ const customerTypeSchema = new mongoose.Schema({
   discount:   { type: Number, default: 0 },
   creditDays: { type: Number, default: 0 },
   isActive:   { type: Boolean, default: true },
+  isDeleted:  { type: Boolean, default: false },
+  deletedAt:  { type: Date, default: null },
 }, { timestamps: true });
 
 customerTypeSchema.pre('save', async function (next) {
@@ -251,6 +253,8 @@ const leadSourceSchema = new mongoose.Schema({
   isActive:   { type: Boolean, default: true },
   leadsCount: { type: Number, default: 0 },
   conversions:{ type: Number, default: 0 },
+  isDeleted:  { type: Boolean, default: false },
+  deletedAt:  { type: Date, default: null },
 }, { timestamps: true });
 
 leadSourceSchema.pre('save', async function (next) {
