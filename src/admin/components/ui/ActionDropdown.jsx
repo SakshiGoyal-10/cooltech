@@ -56,15 +56,15 @@ const ActionDropdown = ({ onView, onEdit, onDelete, extraItems = [] }) => {
       </button>
 
       {open && (
-        <div className="ad-menu" role="menu">
+        <div className="action-menu" role="menu">
           {items.map((item, i) => (
             <button
               key={i}
-              className={`ad-item${item.danger ? ' ad-item--danger' : ''}`}
+              className={`action-item${item.danger ? ' action-item--danger' : ''}`}
               onClick={handle(item.onClick)}
               role="menuitem"
             >
-              <span className="ad-icon">{item.icon}</span>
+              <span className="action-icon">{item.icon}</span>
               {item.label}
             </button>
           ))}

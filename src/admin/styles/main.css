@@ -1690,14 +1690,14 @@ html, body, #root {
   line-height: 1;
 }
 
-.ad-trigger:hover {
+.action-trigger:hover {
   background: #F3F4F6;
   border-color: #D1D5DB;
   color: #374151;
 }
 
 /* ── Dropdown panel ── */
-.ad-menu {
+.action-menu {
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
@@ -1723,7 +1723,7 @@ html, body, #root {
 }
 
 /* ── Menu items ── */
-.ad-item {
+.action-item {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1740,21 +1740,21 @@ html, body, #root {
   transition: background 0.12s, color 0.12s;
 }
 
-.ad-item:hover {
+.action-item:hover {
   background: #F3F4F6;
   color: #111827;
 }
 
-.ad-item--danger {
+.action-item--danger {
   color: #DC2626;
 }
 
-.ad-item--danger:hover {
+.action-item--danger:hover {
   background: #FEF2F2;
   color: #B91C1C;
 }
 
-.ad-icon {
+.action-icon {
   font-size: 14px;
   width: 16px;
   display: inline-flex;
