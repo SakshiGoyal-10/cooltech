@@ -1667,13 +1667,13 @@ html, body, #root {
 
 /* ─── ActionDropdown.css ──────────────────────────────────────────────────── */
 
-.ad-wrap {
+.action-wrap {
   position: relative;
   display: inline-block;
 }
 
 /* ── Trigger button ── */
-.ad-trigger {
+.action-trigger {
   width: 28px;
   height: 28px;
   border-radius: 6px;

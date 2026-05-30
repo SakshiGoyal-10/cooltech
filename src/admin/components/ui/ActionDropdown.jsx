@@ -44,9 +44,9 @@ const ActionDropdown = ({ onView, onEdit, onDelete, extraItems = [] }) => {
   const items = [...builtIn, ...extraItems];
 
   return (
-    <div className="ad-wrap" ref={ref}>
+    <div className="action-wrap" ref={ref}>
       <button
-        className="ad-trigger"
+        className="action-trigger"
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
         aria-label="Row actions"
         aria-haspopup="true"
